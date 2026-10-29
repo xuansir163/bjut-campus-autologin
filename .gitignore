@@ -1,0 +1,10 @@
+# 各人的账号密码，绝不入库
+config.json
+
+# Python
+__pycache__/
+*.pyc
+
+# 打包产物
+*.zip
+edge-headless-profile/
