@@ -5,6 +5,9 @@ config.json
 __pycache__/
 *.pyc
 
+# 诊断报告（含本机信息，不入库）
+diagnose.txt
+
 # 打包产物
 *.zip
 edge-headless-profile/

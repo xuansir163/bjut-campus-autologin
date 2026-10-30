@@ -44,8 +44,22 @@ def log(msg):
 
 
 def load_config():
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    if not CONFIG_PATH.exists():
+        log("[ERROR] 找不到 config.json")
+        log("        请把 config.example.json 复制/改名为 config.json，用记事本填入学号和密码。")
+        log("        当前目录: %s" % BASE)
+        sys.exit(2)
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception as e:
+        log("[ERROR] config.json 格式有问题: %s" % e)
+        log("        正确格式: {\"account\": \"学号\", \"password\": \"密码\", \"service\": \"校园用户\"}")
+        sys.exit(2)
+    if not cfg.get("account") or not cfg.get("password") or "在这里填" in str(cfg.get("password")):
+        log("[ERROR] config.json 还没填账号密码（仍是示例占位内容）")
+        sys.exit(2)
+    return cfg
 
 
 def http_get(url, timeout=6):
@@ -244,7 +258,63 @@ def force_logout(local_ip=""):
     return not session_online()
 
 
+TASK_NAME = "BJUT-CampusAutoLogin"
+
+
+def _ps_quote(text):
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+def install_task():
+    """注册计划任务：开机 + 每 5 分钟检测（需管理员权限）"""
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe")   # 无窗口运行，避免每 5 分钟弹黑框
+    if pyw.exists():
+        exe = pyw
+    ps = (
+        "$t1 = New-ScheduledTaskTrigger -AtLogOn; "
+        "$t2 = New-ScheduledTaskTrigger -Once -At (Get-Date) "
+        "-RepetitionInterval (New-TimeSpan -Minutes 5) "
+        "-RepetitionDuration (New-TimeSpan -Days 3650); "
+        "Register-ScheduledTask -TaskName {name} -Trigger $t1,$t2 "
+        "-Action (New-ScheduledTaskAction -Execute {exe} -Argument {arg} "
+        "-WorkingDirectory {wd}) "
+        "-Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries "
+        "-ExecutionTimeLimit (New-TimeSpan -Minutes 4) "
+        "-MultipleInstances IgnoreNew -Hidden) -Force | Out-Null"
+    ).format(
+        name=_ps_quote(TASK_NAME),
+        exe=_ps_quote(exe),
+        arg=_ps_quote('"%s"' % (BASE / "campus_login.py")),
+        wd=_ps_quote(BASE),
+    )
+    log("[..] Python  : %s" % sys.executable)
+    log("[..] 运行于  : %s" % exe)
+    log("[..] 脚本目录: %s" % BASE)
+    rc = subprocess.call(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                          "-Command", ps])
+    if rc == 0:
+        log("[OK] 计划任务已安装：开机自动登录 + 每 5 分钟检测")
+        log("     卸载：python campus_login.py --uninstall-task")
+        return 0
+    log("[FAIL] 安装失败（返回码 %d）。请确认是以管理员身份运行。" % rc)
+    return 1
+
+
+def uninstall_task():
+    rc = subprocess.call(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                          "-Command", "Unregister-ScheduledTask -TaskName %s -Confirm:$false"
+                          % _ps_quote(TASK_NAME)])
+    log("[OK] 已卸载计划任务" if rc == 0 else "[FAIL] 卸载失败（返回码 %d）" % rc)
+    return rc
+
+
 def main():
+    if "--install-task" in sys.argv:
+        return install_task()
+    if "--uninstall-task" in sys.argv:
+        return uninstall_task()
+
     force = "--force" in sys.argv
     status_only = "--status" in sys.argv
 

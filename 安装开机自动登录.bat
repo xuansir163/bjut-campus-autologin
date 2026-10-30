@@ -1,6 +1,8 @@
 @echo off
-REM Install BJUT campus network auto-login scheduled task (requires admin)
-REM Uses python from PATH. Edit if your python is elsewhere.
+chcp 65001 >nul 2>&1
+setlocal
+cd /d "%~dp0"
+
 net session >nul 2>&1
 if %errorlevel% neq 0 (
     echo Requesting administrator privileges...
@@ -8,15 +10,57 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-where python >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python not found in PATH. Install Python 3 first.
-    pause
-    exit /b 1
+set "PYTHONIOENCODING=utf-8"
+set "PYTHONUTF8=1"
+
+if not exist "campus_login.py" (
+  echo [ERROR] campus_login.py NOT found. Extract the zip first, then run this file.
+  pause
+  exit /b 1
 )
 
-powershell -NoProfile -Command "$py = (Get-Command python).Source; $pyw = Join-Path (Split-Path $py) 'pythonw.exe'; if (-not (Test-Path $pyw)) { $pyw = $py }; $t1 = New-ScheduledTaskTrigger -AtLogOn; $t2 = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650); Register-ScheduledTask -TaskName 'BJUT-CampusAutoLogin' -Trigger $t1,$t2 -Action (New-ScheduledTaskAction -Execute $pyw -Argument 'campus_login.py' -WorkingDirectory '%~dp0') -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 4) -MultipleInstances IgnoreNew -Hidden) -Force | Out-Null; if ($?) { Write-Host '=== INSTALL OK ===' } else { Write-Host '=== INSTALL FAILED ===' }"
+set "PY="
+set "PYARGS="
+call :pick python
+if not defined PY call :pick py -3
+if not defined PY call :pick python3
+
+if not defined PY (
+  echo [ERROR] No working Python 3 found. Install it from python.org first
+  echo         and tick "Add python.exe to PATH".
+  pause
+  exit /b 1
+)
+
+echo [..] Using: %PY% %PYARGS%
+echo.
+%PY% %PYARGS% campus_login.py --install-task
 
 echo.
 echo Done. You can close this window.
 pause
+exit /b 0
+
+:pick
+where %~1 >nul 2>&1
+if errorlevel 1 exit /b 0
+for /f "delims=" %%P in ('where %~1 2^>nul') do (
+  if not defined PY (
+    echo %%P | findstr /i "WindowsApps" >nul
+    if errorlevel 1 (
+      "%%P" %~2 -c "import encodings" >nul 2>&1
+      if not errorlevel 1 (
+        set "PY=%%P"
+        set "PYARGS=%~2"
+      )
+    )
+  )
+)
+if not defined PY (
+  %~1 %~2 -c "import encodings" >nul 2>&1
+  if not errorlevel 1 (
+    set "PY=%~1"
+    set "PYARGS=%~2"
+  )
+)
+exit /b 0
