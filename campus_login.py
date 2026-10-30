@@ -83,11 +83,14 @@ def ncsi_ok():
         return False
 
 
-def get_session():
+def get_session(local_ip=None):
     """
-    查询认证服务器上的在线会话列表，返回第一条会话信息（dict）或 None。
-    关键点：登出接口必须携带本机真实的 wlan_user_mac 和 user_account，
+    查询认证服务器上的在线会话，返回本机会话（dict）或 None。
+    关键点：登出接口必须携带本机真实的 MAC 和账号，
     用假 MAC(000000000000) 登出会被服务器拒绝，返回"注销操作非本机终端"。
+
+    优先按本机 IP 匹配（同一账号多设备同时在线时，避免误登出其他设备）；
+    匹配不到再退回列表第一条。
     """
     url = ("http://{}:{}/eportal/portal/online_list"
            "?callback=t&terminal_type=1&lang=zh-cn").format(SER_HOST, EPORTAL_PORT)
@@ -98,8 +101,41 @@ def get_session():
     if '"online_ip"' not in text:
         return None
 
-    def pick(*keys):
-        """按优先级取字段（不同 Dr.COM 版本字段名不同：online_mac/user_mac）"""
+    def normalize(row):
+        def pick(*keys):
+            for k in keys:
+                v = row.get(k)
+                if v:
+                    return str(v)
+            return ""
+        return {
+            "online_ip": pick("online_ip", "user_ip"),
+            "user_mac": pick("online_mac", "user_mac", "mac"),
+            "user_account": pick("user_account", "user_name", "account"),
+            "online_time": pick("online_time"),
+        }
+
+    # 1) 正常 JSON 解析
+    try:
+        data = jsonp_parse(text)
+        rows = data.get("list") or data.get("rows") or []
+        if rows:
+            chosen = None
+            if local_ip:
+                for item in rows:
+                    if str(item.get("online_ip", "")) == str(local_ip):
+                        chosen = item
+                        break
+            if chosen is None:
+                chosen = rows[0]
+            sess = normalize(chosen)
+            sess["raw"] = text[:300]
+            return sess if (sess["online_ip"] or sess["user_mac"]) else None
+    except Exception:
+        pass
+
+    # 2) JSON 解析失败时退回正则提取（兼容畸形响应）
+    def grab(*keys):
         for key in keys:
             m = re.search(r'"%s"\s*:\s*"([^"]*)"' % key, text)
             if m and m.group(1):
@@ -107,10 +143,10 @@ def get_session():
         return ""
 
     sess = {
-        "online_ip": pick("online_ip", "user_ip"),
-        "user_mac": pick("online_mac", "user_mac", "mac"),
-        "user_account": pick("user_account", "user_name", "account"),
-        "online_time": pick("online_time"),
+        "online_ip": grab("online_ip", "user_ip"),
+        "user_mac": grab("online_mac", "user_mac", "mac"),
+        "user_account": grab("user_account", "user_name", "account"),
+        "online_time": grab("online_time"),
         "raw": text[:300],
     }
     return sess if (sess["online_ip"] or sess["user_mac"]) else None
@@ -170,10 +206,12 @@ def do_logout(sess, local_ip=""):
     url = ("http://{}:{}/eportal/portal/logout?callback=dr1003&login_method=1"
            "&user_account={}&wlan_user_ip={}&wlan_user_ipv6="
            "&wlan_user_mac={}&wlan_ac_ip=&wlan_ac_name=&jsVersion=4.1&lang=zh-cn"
+           "&v={}&lang=zh"
            ).format(SER_HOST, EPORTAL_PORT,
                     urllib.parse.quote(account, safe=""),
                     urllib.parse.quote(ip, safe=""),
-                    mac)
+                    mac,
+                    random.randint(1000, 9999))
     try:
         data = jsonp_parse(http_get(url, timeout=8))
     except Exception as e:
@@ -192,7 +230,7 @@ def do_logout(sess, local_ip=""):
 def force_logout(local_ip=""):
     """强登出：查真实会话 → 定向登出 → 复查，最多重试 2 轮"""
     for i in range(1, 3):
-        sess = get_session()
+        sess = get_session(local_ip)
         if not sess:
             log("[OK] 服务器上已无本机会话")
             return True
@@ -225,7 +263,7 @@ def main():
         return 0
 
     if status_only:
-        sess = get_session()
+        sess = get_session(local_ip)
         net = real_online()
         if sess and net:
             state = "在线（正常）"
@@ -243,7 +281,7 @@ def main():
         return 0
 
     # 2. 真正在线（会话在 + 外网通）才跳过
-    sess = get_session()
+    sess = get_session(local_ip)
     net = real_online()
     if net and not force:
         log("[OK] 已在线（{}），无需登录".format(local_ip))
