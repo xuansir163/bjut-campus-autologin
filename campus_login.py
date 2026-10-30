@@ -46,19 +46,34 @@ def log(msg):
 def load_config():
     if not CONFIG_PATH.exists():
         log("[ERROR] 找不到 config.json")
-        log("        请把 config.example.json 复制/改名为 config.json，用记事本填入学号和密码。")
-        log("        当前目录: %s" % BASE)
+        log("        程序只读【bat 所在文件夹】里的 config.json，当前目录: %s" % BASE)
+        log("        请把 config.example.json 复制/改名为 config.json，用记事本填入学号和密码，")
+        log("        填完务必按 Ctrl+S 保存（记事本标题栏有 ● 圆点 = 还没保存）。")
         sys.exit(2)
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
             cfg = json.load(f)
     except Exception as e:
         log("[ERROR] config.json 格式有问题: %s" % e)
+        log("        常见原因：另存为时编码不是 UTF-8；或多了/少了引号逗号。")
         log("        正确格式: {\"account\": \"学号\", \"password\": \"密码\", \"service\": \"校园用户\"}")
         sys.exit(2)
-    if not cfg.get("account") or not cfg.get("password") or "在这里填" in str(cfg.get("password")):
-        log("[ERROR] config.json 还没填账号密码（仍是示例占位内容）")
+
+    account = str(cfg.get("account", "")).strip()
+    password = str(cfg.get("password", ""))
+    placeholder = ("在这里填" in account) or ("在这里填" in password) or (password == "你的认证密码")
+    if not account or not password or placeholder:
+        log("[ERROR] config.json 还没填好账号密码（程序实际读到：account=%r, 密码长度=%d）"
+            % (account, len(password)))
+        log("        如果你在记事本里明明填了：")
+        log("        1) 检查标题栏是否有 ● —— 有就是没保存，按 Ctrl+S")
+        log("        2) 确认改的是这个文件夹里的文件（不是桌面/其他副本）")
+        log("        程序读取的路径: %s" % CONFIG_PATH)
         sys.exit(2)
+    if account != cfg.get("account") or password != cfg.get("password"):
+        log("[WARN] 账号或密码首尾有空格，已自动去掉。建议自己再改干净。")
+        cfg["account"] = account
+        cfg["password"] = password
     return cfg
 
 
